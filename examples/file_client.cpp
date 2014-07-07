@@ -23,8 +23,41 @@ FileResponse request_file(const FileRequest& req, ib::Conn<>& conn) {
 }
 
 int main(int argc, char* argv[]) {
-    if(argc != 4) {
-        cerr << "usage: " << argv[0] << " connect_string remote_path local_path" << endl;
+    int device = 0;
+    int port = 0;
+    int pkey_index = 0;
+    int c;
+    while((c = getopt(argc, argv, "d:p:k:")) != -1) {
+        switch(c) {
+        case 'd':
+        {
+            istringstream iss(optarg);
+            iss >> device;
+            cout << "device: " << device << endl;
+            break;
+        }
+        case 'k':
+        {
+            istringstream iss(optarg);
+            iss >> pkey_index;
+            cout << "pkey_index: " << pkey_index << endl;
+            break;
+        }
+        case 'p':
+        {
+            istringstream iss(optarg);
+            iss >> port;
+            cout << "ib port: " << port << endl;
+            break;
+        }
+        case '?':
+            return 1;
+        default:
+            abort();
+        }
+    }
+    if((argc - optind) != 3) {
+        cerr << "usage: " << argv[0] << " [opts] connect_string remote_path local_path" << endl;
         return 1;
     }
 
@@ -39,7 +72,7 @@ int main(int argc, char* argv[]) {
         conn_state = (success ? CONNECTED : ERROR);
         lock.unlock();
         cv.notify_one();
-    }, ib::CONNECTOR, argv[1]);
+    }, ib::CONNECTOR, argv[optind]);
 
     cout << "waiting for connection to be established" << endl;
     unique_lock<mutex> lock(mtx);
@@ -53,13 +86,13 @@ int main(int argc, char* argv[]) {
     }
 
     FileRequest req;
-    strncpy(req.filepath, argv[2], 1023);
+    strncpy(req.filepath, argv[optind+1], 1023);
     req.filepath[1023] = '\0';
     auto remote_info = request_file(req, conn);
     cout << "raddr: " << remote_info.addr << ", rkey: " << remote_info.key
         << ", size: " << remote_info.size << endl;
 
-    auto mr_ptr = ib::make_file_mr(conn.pd, argv[3], remote_info.size);
+    auto mr_ptr = ib::make_file_mr(conn.pd, argv[optind+2], remote_info.size);
 
     auto start_tp = chrono::system_clock::now();
     auto future = conn.Read(mr_ptr, remote_info.addr, remote_info.key, remote_info.size);

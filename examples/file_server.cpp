@@ -1,6 +1,7 @@
 #include <iostream>
 #include <ib++/conn.hpp>
 #include <condition_variable>
+#include <sstream>
 #include "file_request.hpp"
 
 using namespace std;
@@ -11,7 +12,41 @@ enum ConnState {
     ERROR,
 };
 
-int main() {
+int main(int argc, char *argv[]) {
+    int device = 0;
+    int port = 0;
+    int pkey_index = 0;
+    int c;
+    while((c = getopt(argc, argv, "d:p:k:")) != -1) {
+        switch(c) {
+        case 'd':
+        {
+            istringstream iss(optarg);
+            iss >> device;
+            cout << "device: " << device << endl;
+            break;
+        }
+        case 'k':
+        {
+            istringstream iss(optarg);
+            iss >> pkey_index;
+            cout << "pkey_index: " << pkey_index << endl;
+            break;
+        }
+        case 'p':
+        {
+            istringstream iss(optarg);
+            iss >> port;
+            cout << "ib port: " << port << endl;
+            break;
+        }
+        case '?':
+            return 1;
+        default:
+            abort();
+        }
+    }
+
     mutex mtx;
     condition_variable cv;
     ConnState conn_state = WAITING;
@@ -23,7 +58,7 @@ int main() {
         conn_state = (success ? CONNECTED : ERROR);
         lock.unlock();
         cv.notify_one();
-    });
+    }, ib::LISTENER, "0.0.0.0:0", device, port, pkey_index);
 
     cout << "waiting for connection@ " << conn.connect_str << endl;
     unique_lock<mutex> lock(mtx);
