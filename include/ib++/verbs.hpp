@@ -56,9 +56,18 @@ static PdPtr make_pd(CtxPtr ctx) {
     return PdPtr(ptr, ibv_dealloc_pd);
 }
 
+using CcPtr = std::shared_ptr<ibv_comp_channel>;
+static CcPtr make_cc(CtxPtr ctx) {
+    auto ptr = ibv_create_comp_channel(ctx.get());
+    if(!ptr) {
+        throw std::runtime_error("cannot create cq");
+    }
+    return CcPtr(ptr, ibv_destroy_comp_channel);
+}
+
 using CqPtr = std::shared_ptr<ibv_cq>;
-static CqPtr make_cq(CtxPtr ctx) {
-    auto ptr = ibv_create_cq(ctx.get(), 1, nullptr, nullptr, 0);
+static CqPtr make_cq(CtxPtr ctx, CcPtr cc=CcPtr(nullptr)) {
+    auto ptr = ibv_create_cq(ctx.get(), 1, nullptr, cc.get(), 0);
     if(!ptr) {
         throw std::runtime_error("cannot create cq");
     }
@@ -127,8 +136,6 @@ static MrPtr make_file_mr(PdPtr pd, const char *pathname, size_t size=-1,
         close(fd);
         throw std::runtime_error("cannot mmap file");
     }
-    std::cout << "buf: " << buf << std::endl;
-    std::cout << "size: " << size << std::endl;
     auto ptr = ibv_reg_mr(pd.get(), buf, size, access);
     if(!ptr) {
         munmap(buf, size);

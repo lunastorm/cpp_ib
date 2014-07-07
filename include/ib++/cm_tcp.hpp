@@ -39,7 +39,6 @@ struct Socket {
 
     ~Socket() {
         if(fd >= 0) {
-        std::cout << "close socket " << fd << std::endl;
             close(fd);
         }
     }

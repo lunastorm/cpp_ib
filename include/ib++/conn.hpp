@@ -2,7 +2,10 @@
 #define IB_CONN_HPP_
 
 #include <thread>
+#include <future>
 #include <functional>
+#include <map>
+#include <atomic>
 #include <ib++/verbs.hpp>
 #include <ib++/utils.hpp>
 #include <ib++/conn_role.hpp>
@@ -18,7 +21,7 @@ struct Conn {
             int nth_device=0, int port=0, int pkey_index=0):
         cb_(cb), role_(role),
         devices(get_devices()), ctx(make_ctx(devices, nth_device)),
-        pd(make_pd(ctx)), scq(make_cq(ctx)), rcq(make_cq(ctx)),
+        pd(make_pd(ctx)), cc(make_cc(ctx)), scq(make_cq(ctx, cc)), rcq(make_cq(ctx)),
         qp(make_qp(pd, scq, rcq)),
         cm_conn(role, connect_str_in),
         connect_str(cm_conn.connect_str),
@@ -38,12 +41,39 @@ struct Conn {
                 establishConnection();
             }).detach();
         }
+        std::thread([this]{
+            handleEvents();
+        }).detach();
+    }
+
+    std::future<bool> Read(MrPtr mr, uint64_t remote_addr, uint32_t remote_key, uint64_t size) {
+        ibv_sge sge;
+        sge.addr = reinterpret_cast<uintptr_t>(mr->addr);
+        sge.length = mr->length;
+        sge.lkey = mr->lkey;
+
+        ibv_send_wr wr;
+        wr.wr_id = wr_id_++;
+        wr.next = nullptr;
+        wr.sg_list = &sge;
+        wr.num_sge = 1;
+        wr.opcode = IBV_WR_RDMA_READ;
+        wr.send_flags = IBV_SEND_SIGNALED;
+        wr.wr.rdma.remote_addr = remote_addr;
+        wr.wr.rdma.rkey = remote_key;
+
+        ibv_send_wr *bad_wr;
+        if(0 != ibv_post_send(qp.get(), &wr, &bad_wr)) {
+            throw std::runtime_error("cannot post rdma read");
+        }
+        return promises_[wr.wr_id].get_future();
     }
 
     std::function<void(bool)> cb;
     DevicesPtr devices;
     CtxPtr ctx;
     PdPtr pd;
+    CcPtr cc;
     CqPtr scq;
     CqPtr rcq;
     QpPtr qp;
@@ -114,9 +144,6 @@ private:
         try {
             cm::ConnInfo local_info{getLid(), qp->qp_num, psn_};
             auto remote_info = cm_conn.XchgInfo(local_info);
-            std::cout << "get rep lid: " << remote_info.lid << std::endl;
-            std::cout << "get rep qpn: " << remote_info.qpn << std::endl;
-            std::cout << "get rep psn: " << remote_info.psn << std::endl;
             enterRtr(remote_info);
             enterRts();
         }
@@ -127,54 +154,44 @@ private:
         this->cb_(true);
     }
 
-/*
-    void runClient() {
-        try {
-            auto rep = cm_cnxn.GetRep({getLid(), qp->qp_num, psn_});
-            std::cout << "get rep lid: " << rep.lid << std::endl;
-            std::cout << "get rep qpn: " << rep.qpn << std::endl;
-            std::cout << "get rep psn: " << rep.psn << std::endl;
-            enterRtr(rep);
-            enterRts();
-
-            cm_cnxn.PutRtu();
-            try {
-                this->cb(true);
-            }
-            catch(const std::runtime_error& e) {
-                std::cout << "client error: " << e.what() << std::endl;
-            }
+    void handleEvents() {
+        if(0 != ibv_req_notify_cq(scq.get(), 0)) {
+            throw std::runtime_error("cannot request cq notification");
         }
-        catch(...) {
-            this->cb(false);
-        }
-    }
-
-    void runServer() {
-        try {
-            auto req = cm_cnxn.GetReq();
-            std::cout << "get req lid: " << req.lid << std::endl;
-            std::cout << "get req qpn: " << req.qpn << std::endl;
-            std::cout << "get req psn: " << req.psn << std::endl;
-            enterRtr(req);
-            enterRts();
-            cm_cnxn.GetRtu({getLid(), qp->qp_num, psn_});
-
-            try {
-                this->cb(true);
+        while(true) {
+            ibv_cq *cq;
+            void *cq_ctx;
+            if(0 != ibv_get_cq_event(cc.get(), &cq, &cq_ctx)) {
+                throw std::runtime_error("cannot get cq event");
             }
-            catch(const std::runtime_error& e) {
-                std::cout << "server error: " << e.what() << std::endl;
+            ibv_ack_cq_events(scq.get(), 1);
+            if(0 != ibv_req_notify_cq(scq.get(), 0)) {
+                throw std::runtime_error("cannot request cq notification");
             }
-        } catch(...) {
-            this->cb(false);
+
+            int n;
+            ibv_wc wc;
+            do {
+                n = ibv_poll_cq(scq.get(), 1, &wc);
+                if(n < 0) {
+                    throw std::runtime_error("cannot poll cq");
+                }
+                else if(n == 0) {
+                    continue;
+                }
+                else {
+                    promises_[wc.wr_id].set_value(wc.status == IBV_WC_SUCCESS);
+                    promises_.erase(wc.wr_id);
+                }
+            } while(n);
         }
     }
-    */
 
     std::function<void(bool)> cb_;
     ConnRole role_;
     uint32_t psn_;
+    std::map<uint64_t, std::promise<bool>> promises_;
+    std::atomic_uint_fast64_t wr_id_;
 };
 
 } //ib
