@@ -25,6 +25,7 @@ FileResponse request_file(const FileRequest& req, ib::Conn<>& conn) {
 int main(int argc, char* argv[]) {
     if(argc != 4) {
         cerr << "usage: " << argv[0] << " connect_string remote_path local_path" << endl;
+        return 1;
     }
 
     mutex mtx;
