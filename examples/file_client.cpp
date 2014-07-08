@@ -1,6 +1,5 @@
 #include <iostream>
 #include <ib++/conn.hpp>
-#include <condition_variable>
 #include "file_request.hpp"
 
 using namespace std;
@@ -24,7 +23,7 @@ FileResponse request_file(const FileRequest& req, ib::Conn<>& conn) {
 
 int main(int argc, char* argv[]) {
     int device = 0;
-    int port = 0;
+    int ib_port = 0;
     int pkey_index = 0;
     int c;
     while((c = getopt(argc, argv, "d:p:k:")) != -1) {
@@ -46,8 +45,8 @@ int main(int argc, char* argv[]) {
         case 'p':
         {
             istringstream iss(optarg);
-            iss >> port;
-            cout << "ib port: " << port << endl;
+            iss >> ib_port;
+            cout << "ib port: " << ib_port << endl;
             break;
         }
         case '?':
@@ -61,29 +60,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    mutex mtx;
-    condition_variable cv;
-    ConnState conn_state = WAITING;
-
-    ib::Conn<> conn([&conn_state, &mtx, &cv](bool success) {
-        cout << "connect to server: " << success << endl;
-
-        unique_lock<mutex> lock(mtx);
-        conn_state = (success ? CONNECTED : ERROR);
-        lock.unlock();
-        cv.notify_one();
-    }, ib::CONNECTOR, argv[optind]);
-
+    ib::Conn<> conn(ib::CONNECTOR, argv[optind], device, ib_port, pkey_index);
     cout << "waiting for connection to be established" << endl;
-    unique_lock<mutex> lock(mtx);
-    cv.wait(lock, [&conn_state]{
-        return conn_state != WAITING;
-    });
-
-    if(conn_state == ERROR) {
-        cout << "failed to establish connection" << endl;
-        return 1;
-    }
+    conn.WaitConnected();
 
     FileRequest req;
     strncpy(req.filepath, argv[optind+1], 1023);

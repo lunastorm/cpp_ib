@@ -3,7 +3,6 @@
 
 #include <thread>
 #include <future>
-#include <functional>
 #include <map>
 #include <atomic>
 #include <ib++/verbs.hpp>
@@ -14,18 +13,24 @@
 
 namespace ib {
 
+enum ConnState {
+    WAITING,
+    CONNECTED,
+    ERROR,
+};
+
 template<typename CM = typename cm::tcp::Conn>
 struct Conn {
-    Conn(std::function<void(bool)> cb, ConnRole role=LISTENER,
-            std::string connect_str_in="0.0.0.0:0",
+    Conn(ConnRole role=LISTENER, std::string connect_str_in="0.0.0.0:0",
             int nth_device=0, int port=0, int pkey_index=0):
-        cb_(cb), role_(role),
+        state(WAITING), role_(role),
         devices(get_devices()), ctx(make_ctx(devices, nth_device)),
         pd(make_pd(ctx)), cc(make_cc(ctx)), scq(make_cq(ctx, cc)), rcq(make_cq(ctx)),
         qp(make_qp(pd, scq, rcq)),
         cm_conn(role, connect_str_in),
         connect_str(cm_conn.connect_str),
-        psn_(GenRnd<uint32_t>(0, 0xffffff))
+        psn_(GenRnd<uint32_t>(0, 0xffffff)),
+        connect_future_(connect_promise_.get_future())
     {
         enterInit(port, pkey_index);
 
@@ -44,6 +49,10 @@ struct Conn {
         std::thread([this]{
             handleEvents();
         }).detach();
+    }
+
+    void WaitConnected() {
+        connect_future_.get();
     }
 
     std::future<bool> Read(MrPtr mr, uint64_t remote_addr, uint32_t remote_key, uint64_t size) {
@@ -69,7 +78,7 @@ struct Conn {
         return promises_[wr.wr_id].get_future();
     }
 
-    std::function<void(bool)> cb;
+    ConnState state;
     DevicesPtr devices;
     CtxPtr ctx;
     PdPtr pd;
@@ -146,12 +155,11 @@ private:
             auto remote_info = cm_conn.XchgInfo(local_info);
             enterRtr(remote_info);
             enterRts();
+            connect_promise_.set_value();
         }
         catch(...) {
-            this->cb_(false);
-            return;
+            connect_promise_.set_exception(std::current_exception());
         }
-        this->cb_(true);
     }
 
     void handleEvents() {
@@ -187,11 +195,12 @@ private:
         }
     }
 
-    std::function<void(bool)> cb_;
     ConnRole role_;
     uint32_t psn_;
     std::map<uint64_t, std::promise<bool>> promises_;
     std::atomic_uint_fast64_t wr_id_;
+    std::promise<void> connect_promise_;
+    std::future<void> connect_future_;
 };
 
 } //ib

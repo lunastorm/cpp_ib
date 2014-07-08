@@ -1,6 +1,5 @@
 #include <iostream>
 #include <ib++/conn.hpp>
-#include <condition_variable>
 #include <sstream>
 #include "file_request.hpp"
 
@@ -54,29 +53,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    mutex mtx;
-    condition_variable cv;
-    ConnState conn_state = WAITING;
-
-    ib::Conn<> conn([&conn_state, &mtx, &cv](bool success) {
-        cout << "client connected " << success << endl;
-
-        unique_lock<mutex> lock(mtx);
-        conn_state = (success ? CONNECTED : ERROR);
-        lock.unlock();
-        cv.notify_one();
-    }, ib::LISTENER, connect_str, device, ib_port, pkey_index);
-
-    cout << "waiting for connection@ " << conn.connect_str << endl;
-    unique_lock<mutex> lock(mtx);
-    cv.wait(lock, [&conn_state]{
-        return conn_state != WAITING;
-    });
-
-    if(conn_state == ERROR) {
-        cout << "failed to establish connection" << endl;
-        return 1;
-    }
+    ib::Conn<> conn(ib::LISTENER, connect_str, device, ib_port, pkey_index);
+    cout << "waiting for connection @ " << conn.connect_str << endl;
+    conn.WaitConnected();
 
     FileRequest req;
     if(!conn.cm_conn.GetMsg(&req)) {
@@ -96,5 +75,8 @@ int main(int argc, char *argv[]) {
     FileDone done;
     if(!conn.cm_conn.GetMsg(&done)) {
         cout << "file transfer error" << endl;
+    }
+    else {
+        cout << "file transfer success" << endl;
     }
 }
