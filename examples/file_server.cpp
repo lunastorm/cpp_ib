@@ -14,10 +14,12 @@ enum ConnState {
 
 int main(int argc, char *argv[]) {
     int device = 0;
-    int port = 0;
+    int ib_port = 0;
+    int tcp_port = 0;
     int pkey_index = 0;
+    string connect_str = "0.0.0.0:0";
     int c;
-    while((c = getopt(argc, argv, "d:p:k:")) != -1) {
+    while((c = getopt(argc, argv, "d:p:k:l:")) != -1) {
         switch(c) {
         case 'd':
         {
@@ -36,8 +38,13 @@ int main(int argc, char *argv[]) {
         case 'p':
         {
             istringstream iss(optarg);
-            iss >> port;
-            cout << "ib port: " << port << endl;
+            iss >> ib_port;
+            cout << "ib port: " << ib_port << endl;
+            break;
+        }
+        case 'l':
+        {
+            connect_str = string("0.0.0.0:")+optarg;
             break;
         }
         case '?':
@@ -58,7 +65,7 @@ int main(int argc, char *argv[]) {
         conn_state = (success ? CONNECTED : ERROR);
         lock.unlock();
         cv.notify_one();
-    }, ib::LISTENER, "0.0.0.0:0", device, port, pkey_index);
+    }, ib::LISTENER, connect_str, device, ib_port, pkey_index);
 
     cout << "waiting for connection@ " << conn.connect_str << endl;
     unique_lock<mutex> lock(mtx);
