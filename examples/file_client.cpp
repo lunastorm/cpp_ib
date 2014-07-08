@@ -98,7 +98,10 @@ int main(int argc, char* argv[]) {
     auto future = conn.Read(mr_ptr, remote_info.addr, remote_info.key, remote_info.size);
     bool success = future.get();
     auto time_elapsed = chrono::system_clock::now() - start_tp;
-    cout << "read success: " << success << ", read time: " <<
+    if(!success) {
+        throw std::runtime_error("read remote file failed");
+    }
+    cout << "read time: " <<
         chrono::duration_cast<chrono::microseconds>(time_elapsed).count() << "us" << endl;
 
     conn.cm_conn.PutMsg(FileDone{});
